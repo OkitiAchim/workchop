@@ -10,6 +10,10 @@ import { shade } from '../lib/color';
 import { getItemModel } from './extensions';
 import { sceneLighting } from './lighting';
 import { Ball, Box, Cyl } from './prims';
+import { RacingTv } from './RacingTv';
+import { GameController } from './GameController';
+import { CAR_COLORS, racingRigs } from '../../../shared/racing';
+import { useRacing } from '../features/racing/state';
 
 // Furniture built from primitives. Every model is centred on its footprint,
 // sits on y = 0 and faces +z (the side a person uses it from).
@@ -163,6 +167,23 @@ function Whiteboard() {
         <Box key={i} p={[x, y, 0.022]} s={[w, 0.025, 0.004]} c={col} shadow={false} />
       ))}
       <Box p={[0, 0.76, 0.04]} s={[1.2, 0.03, 0.08]} c="#b9bec7" />
+    </group>
+  );
+}
+
+function GamingTable({ itemId }: { itemId?: string }) {
+  const office = useStore((s) => s.office);
+  const rig = office && racingRigs(office).find((r) => r.table.id === itemId);
+  const current = useRacing((s) => rig ? s.games[rig.tv.id] : undefined);
+  return (
+    <group>
+      <Box p={[0, 0.32, 0]} s={[1.6, 0.05, 0.75]} c="#c4aa89" rounded />
+      {[-0.7, 0.7].flatMap((x) => [-0.3, 0.3].map((z) => <Box key={`${x}${z}`} p={[x, 0.15, z]} s={[0.05, 0.3, 0.05]} c={DARK} />))}
+      <Box p={[0, 0.386, -0.2]} s={[0.36, 0.065, 0.2]} c="#182333" rounded />
+      <Box p={[0, 0.424, -0.2]} s={[0.17, 0.005, 0.08]} c="#45d7ff" emissive="#45d7ff" shadow={false} />
+      {[0, 1].map((seat) => current?.drivers.some((d) => d.seat === seat) ? null : (
+        <group key={seat} position={[seat ? 0.48 : -0.48, 0.408, 0.08]}><GameController color={CAR_COLORS[seat]} /></group>
+      ))}
     </group>
   );
 }
@@ -583,6 +604,9 @@ export const ItemModel = memo(function ItemModel({
     case 'reception': return <Reception c={c} />;
     case 'whiteboard': return <Whiteboard />;
     case 'tv': return <Tv />;
+    case 'racing-tv': return <RacingTv itemId={itemId} />;
+    case 'gaming-couch': return <Armchair c={c} width={2.6} />;
+    case 'gaming-table': return <GamingTable itemId={itemId} />;
     case 'bookshelf': return <Bookshelf c={c} />;
     case 'printer': return <Printer />;
     case 'counter': return <Counter c={c} />;

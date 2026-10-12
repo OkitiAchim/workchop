@@ -1,0 +1,27 @@
+.race-overlay {
+  position: absolute;
+  right: 20px;
+  bottom: 100px;
+  width: min(800px, calc(100vw - 32px));
+  padding: 12px;
+  color: #f5f8ff;
+  background: #091322f5;
+  border: 1px solid #385369;
+  border-radius: 18px;
+  box-shadow: 0 16px 48px #0008;
+  pointer-events: auto;
+  z-index: 12;
+}
+.race-overlay-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.race-overlay canvas { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; }
+.race-overlay button { color: #fff; background: #2b425e; border: 1px solid #7088a4; border-radius: 8px; padding: 8px 12px; cursor: pointer; font: inherit; }
+.race-overlay button:disabled { opacity: .6; cursor: default; }
+.race-controls { display: flex; gap: 8px; margin-top: 10px; }
+.race-controls button { touch-action: none; user-select: none; }
+.race-controls button:nth-child(2) { flex: 1; }
+.race-special-controls { display: flex; gap: 8px; margin-top: 8px; }
+.race-special-controls button { flex: 1; touch-action: none; user-select: none; font-size: 12px; }
+.race-start { width: 100%; margin-top: 8px; background: #246d65 !important; }
+.race-overlay p { margin: 8px 0 0; font-size: 12px; color: #c0d3e8; }
+@media (max-width: 600px) { .race-overlay { right: 8px; bottom: 90px; width: calc(100vw - 16px); padding: 8px; } }
+@media (max-height: 740px) and (min-width: 601px) { .race-overlay { width: min(640px, calc(100vw - 32px)); bottom: 84px; padding: 8px; } }

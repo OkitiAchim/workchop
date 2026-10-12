@@ -360,7 +360,7 @@ describe('PGlite data directory lock', () => {
     await expect(openPGlite(dir)).rejects.toThrow(/already open in this process/);
     // Also by another path to the same folder.
     const link = path.join(tempDir(), 'link');
-    symlinkSync(dir, link);
+    symlinkSync(dir, link, process.platform === 'win32' ? 'junction' : 'dir');
     await expect(openPGlite(link)).rejects.toThrow(/already open in this process/);
     await db.close();
     expect(existsSync(path.join(dir, '.workchop.lock'))).toBe(false);

@@ -45,6 +45,9 @@ export interface CatalogEntry {
 }
 
 const entries: CatalogEntry[] = [
+  { type: 'racing-tv', label: 'Racing TV', icon: '📺', category: 'Fun', w: 3, d: 0.12, h: 2.5, solid: false, snapCenter: true },
+  { type: 'gaming-couch', label: 'Two-player gaming couch', icon: '🛋️', category: 'Fun', w: 2.6, d: 1, h: 0.9, solid: true, seats: [{ x: -0.6, z: 0 }, { x: 0.6, z: 0 }], colorable: true, defaultColor: '#334963', snapCenter: true },
+  { type: 'gaming-table', label: 'Controller table', icon: '🎮', category: 'Fun', w: 1.6, d: 0.8, h: 0.5, solid: true, snapCenter: true },
   // Work
   // A wrapper (like the jukebox's below), so the import cycle with world.ts doesn't matter.
   { type: 'desk', label: 'Desk', icon: '🖥️', category: 'Work', w: 2, d: 1, h: 1.2, solid: true, colorable: true, defaultColor: '#c8a27a', sanitizeData: (raw) => sanitizeDeskData(raw) },

@@ -6,6 +6,7 @@ import { tapShoulder } from '../features/audio/focus';
 import { GESTURES, ReactionEffects } from '../features/audio/Reactions';
 import { local, remoteTargets, rendered } from '../lib/positions';
 import { getState, useStore } from '../state/store';
+import { controllerColor, useRacing } from '../features/racing/state';
 import { Avatar, BlobShadow, useMotion, type AvatarMotion } from './Avatar';
 import { stepLocal } from './movement';
 
@@ -46,6 +47,7 @@ export function LocalPlayer() {
   const me = useStore((s) => s.me);
   const focus = useStore((s) => s.focus);
   const selfId = useStore((s) => s.selfId) ?? 'self';
+  const controller = useRacing((s) => controllerColor(s.games, selfId));
   const group = useRef<THREE.Group>(null);
   const motion = useMotion();
   const camera = useThree((s) => s.camera);
@@ -64,7 +66,7 @@ export function LocalPlayer() {
   return (
     <group ref={group}>
       <BlobShadow />
-      <Avatar config={me.avatar} motion={motion} focus={focus} />
+      <Avatar config={me.avatar} motion={motion} focus={focus} controller={controller} />
       <Overlay id={selfId} speakId="self" isSelf motion={motion} />
     </group>
   );
@@ -79,6 +81,7 @@ function lerpAngle(a: number, b: number, t: number): number {
 
 const RemotePlayer = memo(function RemotePlayer({ id }: { id: string }) {
   const info = useStore((s) => s.players[id]);
+  const controller = useRacing((s) => controllerColor(s.games, id));
   const group = useRef<THREE.Group>(null);
   const motion = useMotion();
   const pos = useRef<{ x: number; z: number; ry: number } | null>(null);
@@ -145,7 +148,7 @@ const RemotePlayer = memo(function RemotePlayer({ id }: { id: string }) {
       onPointerOut={focus ? hover(false) : undefined}
     >
       <BlobShadow />
-      <Avatar config={avatar} motion={motion} focus={focus} />
+      <Avatar config={avatar} motion={motion} focus={focus} controller={controller} />
       <Overlay id={id} speakId={id} isSelf={false} motion={motion} />
     </group>
   );

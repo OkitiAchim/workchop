@@ -2,6 +2,7 @@ import type { Camera } from 'three';
 import { getEntry, type Seat } from '../../../shared/catalog';
 import { findFreeSpot, findPath, isBlocked, moveWithCollision, standUpSpot } from '../../../shared/geometry';
 import type { Office } from '../../../shared/types';
+import { racingItems } from '../../../shared/racing';
 import { focusHint } from '../features/audio/focus';
 import { local } from '../lib/positions';
 import { getSession } from '../lib/session';
@@ -34,7 +35,7 @@ export function standUp(): void {
   local.anim = 'idle';
   const office = getState().office;
   if (!office) return;
-  const item = office.items.find((i) => i.id === seat.itemId);
+  const item = racingItems(office).find((i) => i.id === seat.itemId);
   const { colliders } = officeData(office);
   const spot = standUpSpot(seat, !!item && !!getEntry(item.type)?.solid, colliders, office.settings);
   local.x = spot.x;
@@ -95,7 +96,8 @@ export function stepLocal(dt: number, camera: Camera): number {
   const office = getState().office;
   if (!office) return 0;
   const { colliders } = officeData(office);
-  const input = axis();
+  const gaming = local.seat && racingItems(office).some((i) => i.id === local.seat?.itemId && i.type === 'gaming-couch');
+  const input = gaming ? { x: 0, y: 0, run: false } : axis();
   let dx = 0;
   let dz = 0;
   let speed = 0;
@@ -179,7 +181,7 @@ export function stepLocal(dt: number, camera: Camera): number {
   hintTimer += dt;
   if (hintTimer > 0.25) {
     hintTimer = 0;
-    const hint = focusHint() ?? (local.seat ? 'Press E (or move) to stand up' : (nearestAction(office)?.hint ?? null));
+    const hint = gaming ? 'Space / ↑: gas · ← / →: steer · B: brake · N: nitro · E: stand' : focusHint() ?? (local.seat ? 'Press E (or move) to stand up' : (nearestAction(office)?.hint ?? null));
     if (hint !== getState().hint) setState({ hint });
   }
   return speed;
