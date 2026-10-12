@@ -50,6 +50,10 @@ interface State {
   /** The token from an emailed link (`/reset#t=…`) or a guest link (`/o/<id>#guest=…`), taken out of the address. */
   linkToken: string | null;
   connection: 'online' | 'reconnecting';
+  /** While reconnecting: why the last try to get back in didn't work (it's tried again by itself). */
+  connectionNote: string | null;
+  /** This tab stepped aside: you came into this office in another tab or on another device. Use here takes it back. */
+  elsewhere: boolean;
 
   /** Who is signed in (null for guests). */
   account: AccountUser | null;
@@ -158,6 +162,8 @@ export const useStore = create<State>()(() => ({
   page: null,
   linkToken: null,
   connection: 'online',
+  connectionNote: null,
+  elsewhere: false,
   account: null,
   accountReady: false,
   providers: { google: false, apple: false, github: false, dev: false, password: false, emailLinks: false },
