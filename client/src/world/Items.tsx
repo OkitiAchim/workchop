@@ -6,13 +6,12 @@ import { create } from 'zustand';
 import { getEntry, seatsOf } from '../../../shared/catalog';
 import { itemFootprint } from '../../../shared/geometry';
 import { DEFAULT_RACING_ID, racingItems } from '../../../shared/racing';
-import { useRacing } from '../features/racing/state';
 import type { OfficeItem } from '../../../shared/types';
 import { local } from '../lib/positions';
 import { canBuild, getState, setState, useStore } from '../state/store';
 import { offeredInteraction, useItemDecor } from './extensions';
 import { ItemModel } from './models';
-import { walkTo } from './movement';
+import { walkToItemSeat } from './movement';
 import { OpacityContext } from './prims';
 
 /**
@@ -49,13 +48,9 @@ function onItemClick(e: ThreeEvent<MouseEvent>, item: OfficeItem) {
     setState({ panel: 'music', musicItemId: item.id, mode: 'play' });
     return;
   }
-  const game = item.type === 'gaming-couch' ? Object.values(useRacing.getState().games).find((g) => g.couchId === item.id) : undefined;
-  const seats = seatsOf(item).filter((_seat, index) => !game?.drivers.some((d) => d.seat === index));
-  if (!seats.length) return;
+  if (!seatsOf(item).length) return;
   e.stopPropagation();
-  // Walk to the closest free seat of this item and sit down.
-  const seat = seats.sort((a, b) => Math.hypot(a.x - local.x, a.z - local.z) - Math.hypot(b.x - local.x, b.z - local.z))[0];
-  walkTo(seat.x, seat.z, { ...seat, itemId: item.id });
+  walkToItemSeat(item.id, e.point);
 }
 
 function setCursor(cursor: string) {

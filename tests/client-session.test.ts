@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { JoinRequest, JoinResponse, Office, PlayerState } from '../shared/types';
+import type { JoinRequest, JoinResponse, Office, PlayerState, Spot } from '../shared/types';
 
 // Coming back after a dropped connection, without a reload: the page joins again by itself (the
 // server replaces its old connection, see JoinRequest.resume), keeps trying while it isn't let back
@@ -147,11 +147,11 @@ const office = {
 const player = (id: string, x = 5): PlayerState =>
   ({ id, name: id, avatar: {}, status: 'available', x, z: 5, ry: 0, anim: 'idle', mic: false, cam: false, screen: false }) as unknown as PlayerState;
 
-const welcome = (selfId: string, others: PlayerState[] = []): JoinResponse => ({
+const welcome = (selfId: string, others: PlayerState[] = [], at?: Spot): JoinResponse => ({
   ok: true,
   selfId,
   office,
-  players: [player(selfId), ...others],
+  players: [{ ...player(selfId), ...at }, ...others],
   isOwner: false,
   role: 'member',
   kind: 'team',
@@ -219,12 +219,12 @@ describe('after a dropped connection', () => {
     await vi.advanceTimersByTimeAsync(1200);
     expect(socket().joins).toHaveLength(4);
 
-    lastJoin().ack(null, welcome('s2', [player('p9')]));
+    lastJoin().ack(null, welcome('s2', [player('p9')], lastJoin().req.at));
     expect(getState()).toMatchObject({ connection: 'online', connectionNote: null, selfId: 's2', phase: 'office' });
     expect(Object.keys(getState().players)).toEqual(['p9']);
     expect(rejoins).toEqual([true]);
     // Where you are, sent again at once.
-    expect(socket().emitted.filter((e) => e.event === 'move').at(-1)!.args).toEqual([12, 9, 1, 'sit']);
+    expect(socket().emitted.filter((e) => e.event === 'move').at(-1)!.args.slice(0, 4)).toEqual([12, 9, 1, 'sit']);
   });
 
   it('tries again when a join goes unanswered, and after a few on a new connection', async () => {
@@ -293,6 +293,92 @@ describe('after a dropped connection', () => {
     window.dispatchEvent(new Event('online'));
     expect(socket()).toMatchObject({ connects: before.connects + 1, disconnects: before.disconnects + 1 });
     expect(fake.restartAll).toHaveBeenCalledOnce();
+  });
+});
+
+describe('authoritative seating', () => {
+  it('accepts another free place on the same couch and keeps its movement snapshot in step', async () => {
+    await enter();
+    Object.assign(local, { x: 9.5, z: 9.95, ry: 0, anim: 'sit', seat: { x: 9.5, z: 9.95, ry: 0, itemId: 'sofa1' } });
+    socket().fire('seat:resolved', { x: 9.5, z: 9.95 }, { x: 10.5, z: 9.95, ry: 0, anim: 'sit' }, 'sofa1');
+    expect(local).toMatchObject({ x: 10.5, z: 9.95, anim: 'sit', seat: { x: 10.5, z: 9.95, itemId: 'sofa1' }, path: null, pathSeat: null });
+    const before = socket().emitted.filter((e) => e.event === 'move').length;
+    getSession()!.sendMove(local.x, local.z, local.ry, local.anim);
+    expect(socket().emitted.filter((e) => e.event === 'move')).toHaveLength(before);
+  });
+
+  it('returns to the accepted standing position when a chair was taken first', async () => {
+    await enter();
+    Object.assign(local, { x: 10, z: 10, ry: 0, anim: 'sit', seat: { x: 10, z: 10, ry: 0, itemId: 'chair1' } });
+    socket().fire('seat:resolved', { x: 10, z: 10 }, { x: 10, z: 11, ry: 0, anim: 'idle' }, null);
+    expect(local).toMatchObject({ x: 10, z: 11, anim: 'idle', seat: null });
+    expect(getState().toasts.at(-1)?.text).toBe('That seat is occupied.');
+  });
+
+  it('does not sit back down on a late response after standing up or choosing another seat', async () => {
+    await enter();
+    const accepted = { x: 10.5, z: 9.95, ry: 0, anim: 'sit' };
+    Object.assign(local, { x: 9.5, z: 9.95, anim: 'idle', seat: null });
+    socket().fire('seat:resolved', { x: 9.5, z: 9.95 }, accepted, 'sofa1');
+    expect(local.anim).toBe('idle');
+    Object.assign(local, { x: 15, z: 15, anim: 'sit', seat: { x: 15, z: 15, ry: 0, itemId: 'chair2' } });
+    socket().fire('seat:resolved', { x: 9.5, z: 9.95 }, accepted, 'sofa1');
+    expect(local).toMatchObject({ x: 15, z: 15, seat: { itemId: 'chair2' } });
+  });
+
+  it('ignores an earlier rejection after standing and sitting at that same spot again', async () => {
+    await enter();
+    const seat = { x: 10, z: 10, ry: 0, itemId: 'chair1' };
+    Object.assign(local, { ...seat, anim: 'sit', seat });
+    getSession()!.sendMove(10, 10, 0, 'sit');
+    const first = socket().emitted.filter((e) => e.event === 'move').at(-1)!.args[4];
+    Object.assign(local, { anim: 'idle', seat: null });
+    getSession()!.sendMove(10, 10, 0, 'idle');
+    Object.assign(local, { anim: 'sit', seat: { ...seat } });
+    getSession()!.sendMove(10, 10, 0, 'sit');
+    const current = socket().emitted.filter((e) => e.event === 'move').at(-1)!.args[4];
+    expect(current).not.toBe(first);
+    socket().fire('seat:resolved', { x: 10, z: 10 }, { x: 10, z: 11, ry: 0, anim: 'idle' }, null, first);
+    expect(local.anim).toBe('sit');
+    expect(local.seat?.itemId).toBe('chair1');
+    socket().fire('seat:resolved', { x: 10, z: 10 }, { x: 10, z: 11, ry: 0, anim: 'idle' }, null, current);
+    expect(local.anim).toBe('idle');
+  });
+
+  it('uses the server alternative after reconnecting instead of reclaiming an occupied couch spot', async () => {
+    await enter();
+    Object.assign(local, { x: 9.5, z: 9.95, ry: 0, anim: 'sit', seat: { x: 9.5, z: 9.95, ry: 0, itemId: 'sofa1' } });
+    socket().down();
+    socket().up('s2');
+    const answer = welcome('s2', [], { x: 10.5, z: 9.95, ry: 0, anim: 'sit' });
+    if (!answer.ok) throw new Error('Expected successful join');
+    answer.office = { ...office, items: [{ id: 'sofa1', type: 'sofa', x: 10, z: 10, rot: 0 }] };
+    lastJoin().ack(null, answer);
+    expect(local.seat).toEqual({ x: 10.5, z: 9.95, ry: 0, itemId: 'sofa1' });
+    expect(socket().emitted.filter((e) => e.event === 'move').at(-1)!.args.slice(0, 4)).toEqual([10.5, 9.95, 0, 'sit']);
+  });
+
+  it('resumes standing when a single seat was occupied while disconnected', async () => {
+    await enter();
+    Object.assign(local, { x: 10, z: 10, ry: 0, anim: 'sit', seat: { x: 10, z: 10, ry: 0, itemId: 'chair1' } });
+    socket().down();
+    socket().up('s2');
+    lastJoin().ack(null, welcome('s2', [], { x: 6, z: 6, ry: 0, anim: 'idle' }));
+    expect(local).toMatchObject({ x: 6, z: 6, anim: 'idle', seat: null });
+    expect(socket().emitted.filter((e) => e.event === 'move').at(-1)!.args).toEqual([6, 6, 0, 'idle']);
+  });
+
+  it('does not replace a newer sit at the same spot with an earlier join correction', async () => {
+    await enter();
+    const seat = { x: 9.5, z: 9.95, ry: 0, itemId: 'sofa1' };
+    Object.assign(local, { ...seat, anim: 'sit', seat });
+    socket().down();
+    socket().up('s2');
+    // A different seating action happened while the join acknowledgement was in flight.
+    Object.assign(local, { anim: 'idle', seat: null });
+    Object.assign(local, { anim: 'sit', seat: { ...seat } });
+    lastJoin().ack(null, welcome('s2', [], { x: 6, z: 6, ry: 0, anim: 'idle' }));
+    expect(local).toMatchObject({ x: 9.5, z: 9.95, anim: 'sit', seat: { itemId: 'sofa1' } });
   });
 });
 

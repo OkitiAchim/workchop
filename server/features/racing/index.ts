@@ -49,7 +49,7 @@ export const feature: Feature = {
       const room = s.room();
       const office = s.office();
       if (room && office) {
-        gamesFor(room.officeId, office);
+        reconcile(room.officeId, office, s.me());
         s.socket.emit('race:state', [...offices.get(room.officeId)!.values()].map((g) => g.snapshot(Date.now())));
       }
     });

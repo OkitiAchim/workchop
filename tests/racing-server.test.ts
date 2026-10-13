@@ -15,7 +15,7 @@ beforeAll(async () => {
 afterAll(async () => { disconnectAll(); await server?.close(); });
 
 describe('racing realtime', () => {
-  it('shares the race with spectators, rejects seat conflicts, restricts hosting and awards disconnects', async () => {
+  it('shares the race with spectators, finds a free couch seat, rejects a full couch, restricts hosting and awards disconnects', async () => {
     const office = await createOffice(base, 'Owner', 'Games', 'startup');
     const a = await join(base, office.id, 'Alice');
     const b = await join(base, office.id, 'Bob');
@@ -34,13 +34,18 @@ describe('racing realtime', () => {
     a.socket.emit('race:start', rig.tv.id);
     await new Promise((r) => setTimeout(r, 120));
     expect(states[0].phase).toBe('waiting');
-    let rejected = false;
-    b.socket.on('race:seat-rejected', () => { rejected = true; });
+    let resolved: Parameters<import('../shared/types').ServerToClientEvents['seat:resolved']> | undefined;
+    b.socket.on('seat:resolved', (...args) => { resolved = args; });
     sit(b, 1);
-    await until(() => rejected);
-    expect(states[0].drivers).toHaveLength(1);
-    sit(b, 0);
     await until(() => states[0]?.phase === 'ready');
+    await until(() => !!resolved);
+    expect(resolved?.[1]).toMatchObject({ ...seats[0], anim: 'sit' });
+    expect(states[0].drivers[1]).toMatchObject({ id: b.res.selfId, number: 2, seat: 0 });
+    let full = false;
+    spectator.socket.on('seat:resolved', (_requested, spot) => { full = spot.anim !== 'sit'; });
+    sit(spectator, 0);
+    await until(() => full);
+    expect(states[0].drivers).toHaveLength(2);
     spectator.socket.emit('race:start', rig.tv.id);
     b.socket.emit('race:start', rig.tv.id);
     await new Promise((r) => setTimeout(r, 120));

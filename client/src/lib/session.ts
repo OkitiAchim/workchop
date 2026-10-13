@@ -1,6 +1,9 @@
 import { io, type Socket } from 'socket.io-client';
+import { seatsOf } from '../../../shared/catalog';
 import { buildColliders, findFreeSpot, isBlocked, proximityVolume } from '../../../shared/geometry';
 import { applyOp } from '../../../shared/office';
+import { racingItems } from '../../../shared/racing';
+import { SEAT_TOLERANCE } from '../../../shared/seating';
 import { wellFormed } from '../../../shared/text';
 import type {
   AnimState,
@@ -11,6 +14,7 @@ import type {
   PlayerState,
   ProfilePatch,
   ServerToClientEvents,
+  Spot,
 } from '../../../shared/types';
 import type { UploadedFile } from '../../../shared/uploads';
 import type { AccessDenied, Role } from '../../../shared/workspace';
@@ -74,6 +78,8 @@ export class OfficeSession {
   private iceTimer: ReturnType<typeof setTimeout> | undefined;
   private unsubs: (() => void)[] = [];
   private lastSent = { x: NaN, z: NaN, ry: NaN, anim: 'idle' as AnimState, at: 0 };
+  /** Distinguishes a new sit at the same coordinates from an earlier, delayed attempt. */
+  private moveSequence = 0;
   private hasJoined = false;
   /** The current connection's id and upload key, while joined. */
   private joined: { selfId: string; uploadKey: string } | null = null;
@@ -176,12 +182,13 @@ export class OfficeSession {
     if (this.hasJoined) req.at = { x: local.x, z: local.z, ry: local.ry, anim: local.anim };
     // Coming back by itself: while you're here in another tab, this one steps aside.
     if (this.hasJoined && !this.takeover) req.rejoin = true;
+    const requestedSeat = local.seat;
     this.socket.timeout(JOIN_TIMEOUT_MS).emit('join', req, (err, res) => {
       // Answers to an older join (or on a connection that has since dropped) don't count.
       if (attempt !== this.joinTry || this.closed) return;
       if (err) this.joinFailed({ ok: false, error: 'The server didn’t answer.' }, true);
       else if (!res.ok) this.joinFailed(res, false);
-      else this.joinedOk(res);
+      else this.joinedOk(res, req.at, requestedSeat);
     });
   }
 
@@ -223,7 +230,7 @@ export class OfficeSession {
     }, delay);
   }
 
-  private joinedOk(res: Extract<JoinResponse, { ok: true }>): void {
+  private joinedOk(res: Extract<JoinResponse, { ok: true }>, requestedAt?: Spot, requestedSeat?: typeof local.seat): void {
     const rejoin = this.hasJoined;
     this.hasJoined = true;
     this.takeover = false;
@@ -243,6 +250,17 @@ export class OfficeSession {
       local.ry = 0;
       local.anim = 'idle';
       local.seat = local.path = local.pathSeat = null;
+    } else if (
+      requestedAt?.anim === 'sit' && local.anim === 'sit' && local.seat === requestedSeat &&
+      Math.hypot(local.x - requestedAt.x, local.z - requestedAt.z) < SEAT_TOLERANCE &&
+      (self.anim !== 'sit' || self.x !== requestedAt.x || self.z !== requestedAt.z || self.ry !== requestedAt.ry)
+    ) {
+      // Someone may have taken our old seat while the connection was away. Keep the server's
+      // alternative (or standing spot), rather than immediately claiming the occupied seat again.
+      const item = self.anim === 'sit' ? racingItems(res.office).find((i) =>
+        seatsOf(i).some((seat) => Math.hypot(seat.x - self.x, seat.z - self.z) < SEAT_TOLERANCE),
+      ) : undefined;
+      this.applySeatSpot(self, item?.id ?? null);
     }
     setState({
       phase: 'office',
@@ -442,6 +460,16 @@ export class OfficeSession {
     return { serverNow: serverNow(), at: { x: local.x, z: local.z }, radio: this.radio.debug(), spotify: getState().spotify };
   }
 
+  private applySeatSpot(spot: Spot, itemId: string | null): void {
+    local.x = spot.x;
+    local.z = spot.z;
+    local.ry = spot.ry;
+    local.anim = spot.anim;
+    local.seat = spot.anim === 'sit' && itemId ? { x: spot.x, z: spot.z, ry: spot.ry, itemId } : null;
+    local.path = local.pathSeat = null;
+    Object.assign(this.lastSent, { x: spot.x, z: spot.z, ry: spot.ry, anim: spot.anim, at: performance.now() });
+  }
+
   private wireSocket(): void {
     const s = this.socket;
     s.on('disconnect', (reason) => {
@@ -483,6 +511,13 @@ export class OfficeSession {
       if (name && announceVisits()) toast(`${name} left`);
     });
     s.on('player:moved', ([id, x, z, ry, anim]) => setRemoteTarget(id, x, z, ry, anim));
+    s.on('seat:resolved', (requested, spot, itemId, requestId) => {
+      // Ignore a late answer after standing up or choosing another seat.
+      if (!this.joined || this.closed || (requestId !== undefined && requestId !== this.moveSequence) || local.anim !== 'sit' ||
+        Math.hypot(local.x - requested.x, local.z - requested.z) >= SEAT_TOLERANCE) return;
+      this.applySeatSpot(spot, itemId);
+      if (spot.anim !== 'sit' && !getState().toasts.some((t) => t.text === 'That seat is occupied.')) toast('That seat is occupied.');
+    });
     s.on('player:updated', (id, patch) => {
       if (id === getState().selfId) return;
       setState((st) => (st.players[id] ? { players: { ...st.players, [id]: { ...st.players[id], ...patch } } } : {}));
@@ -609,8 +644,10 @@ export class OfficeSession {
     const changed = Math.abs(l.x - x) > 0.01 || Math.abs(l.z - z) > 0.01 || Math.abs(l.ry - ry) > 0.05 || l.anim !== anim;
     if (!force && (!changed || (now - l.at < 66 && l.anim === anim))) return;
     if (!this.socket.connected || !this.joined) return;
+    if (changed) this.moveSequence++;
     Object.assign(l, { x, z, ry, anim, at: now });
-    this.socket.emit('move', x, z, ry, anim);
+    if (anim === 'sit') this.socket.emit('move', x, z, ry, anim, this.moveSequence);
+    else this.socket.emit('move', x, z, ry, anim);
   }
 
   /**

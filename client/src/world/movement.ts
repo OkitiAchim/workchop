@@ -9,7 +9,7 @@ import { getSession } from '../lib/session';
 import { getState, setState, toast } from '../state/store';
 import { getItemInteraction, nearbyActionFinders, type NearbyAction } from './extensions';
 import { axis } from './input';
-import { nearestSeat, officeData } from './officeCache';
+import { nearestSeat, officeData, seatOnItem } from './officeCache';
 
 const WALK_SPEED = 3.6;
 const RUN_SPEED = 6.2;
@@ -24,7 +24,21 @@ type SeatRef = Seat & { itemId: string };
  */
 const sendNow = () => getSession()?.sendMove(local.x, local.z, local.ry, local.anim);
 
-export function sitOn(seat: SeatRef): void {
+function occupiedNotice(itemId: string): void {
+  const office = getState().office;
+  const seats = office ? officeData(office).seats.filter((seat) => seat.itemId === itemId) : [];
+  const text = seats.length > 1 && seats[0].type !== 'support-desk' ? 'All seats here are occupied' : 'That seat is occupied';
+  if (!getState().toasts.some((t) => t.text === text)) toast(text);
+}
+
+export function sitOn(requested: SeatRef): boolean {
+  const office = getState().office;
+  const seat = office ? seatOnItem(office, requested.itemId, requested) : null;
+  if (!seat) {
+    local.path = local.pathSeat = null;
+    occupiedNotice(requested.itemId);
+    return false;
+  }
   local.seat = { x: seat.x, z: seat.z, ry: seat.ry, itemId: seat.itemId };
   local.x = seat.x;
   local.z = seat.z;
@@ -33,6 +47,7 @@ export function sitOn(seat: SeatRef): void {
   local.path = null;
   local.pathSeat = null;
   sendNow();
+  return true;
 }
 
 export function standUp(): void {
@@ -85,6 +100,16 @@ export function interact(): void {
 export function walkTo(x: number, z: number, seat?: SeatRef): void {
   const office = getState().office;
   if (!office) return;
+  if (seat) {
+    const available = seatOnItem(office, seat.itemId, seat);
+    if (!available) {
+      occupiedNotice(seat.itemId);
+      return;
+    }
+    seat = available;
+    x = seat.x;
+    z = seat.z;
+  }
   standUp();
   const { colliders } = officeData(office);
   const path = findPath({ x: local.x, z: local.z }, { x, z }, colliders, office.settings);
@@ -93,6 +118,18 @@ export function walkTo(x: number, z: number, seat?: SeatRef): void {
   if (local.path) return;
   if (seat && Math.hypot(seat.x - local.x, seat.z - local.z) < SIT_RANGE) sitOn(seat);
   else if (!getState().toasts.some((t) => t.text === NO_WAY)) toast(NO_WAY);
+}
+
+/** A couch click chooses by the clicked cushion, then falls back within that same couch. */
+export function walkToItemSeat(itemId: string, preferred: { x: number; z: number }): void {
+  const office = getState().office;
+  if (!office) return;
+  const seat = seatOnItem(office, itemId, preferred);
+  if (!seat) {
+    occupiedNotice(itemId);
+    return;
+  }
+  walkTo(seat.x, seat.z, seat);
 }
 
 function lerpAngle(a: number, b: number, t: number): number {
@@ -152,7 +189,20 @@ export function stepLocal(dt: number, camera: Camera): number {
         const seat = local.pathSeat;
         local.pathSeat = null;
         if (seat && Math.hypot(seat.x - (local.x + dx), seat.z - (local.z + dz)) < SIT_RANGE) {
-          sitOn(seat);
+          const available = seatOnItem(office, seat.itemId, seat);
+          if (!available) {
+            local.anim = 'idle';
+            occupiedNotice(seat.itemId);
+            sendNow();
+          } else if (available.x !== seat.x || available.z !== seat.z) {
+            // Someone reached that cushion first. Approach the free spot using a fresh path.
+            const next = moveWithCollision(local.x, local.z, dx, dz, colliders, office.settings);
+            local.x = next.x;
+            local.z = next.z;
+            walkTo(available.x, available.z, available);
+          } else {
+            sitOn(available);
+          }
           return 0;
         }
       }
