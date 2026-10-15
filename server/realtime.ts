@@ -2,10 +2,12 @@ import crypto from 'node:crypto';
 import type { DefaultEventsMap, Server, Socket } from 'socket.io';
 import type { AccountUser } from '../shared/account';
 import { isEmote, sanitizeAvatar, sanitizeName, sanitizeProfile, sanitizeStatus } from '../shared/avatar';
-import { getEntry } from '../shared/catalog';
+import { getEntry, seatsOf } from '../shared/catalog';
 import { buildColliders, findFreeSpot } from '../shared/geometry';
 import { isJukebox, sanitizeSessionUpdate, type MusicLink, type SpotifySession } from '../shared/music';
 import { applyOp, OpError } from '../shared/office';
+import { racingItems } from '../shared/racing';
+import { chooseSeat, occupiedSeat, SEAT_TOLERANCE } from '../shared/seating';
 import type {
   AnimState,
   ClientToServerEvents,
@@ -206,6 +208,21 @@ function spotOn(office: Office, x: unknown, z: unknown, ry: unknown, anim: unkno
     ry: ry as number,
     anim: ANIMS.includes(anim as AnimState) ? (anim as AnimState) : 'idle',
   };
+}
+
+/** Resolves a sit against the room's current occupants before publishing it to anyone. */
+function availableSeat(office: Office, spot: Spot, players: Iterable<PlayerState>, playerId?: string): { spot: Spot; itemId: string | null } | null {
+  if (spot.anim !== 'sit') return { spot, itemId: null };
+  const occupants = [...players];
+  const target = racingItems(office)
+    .map((item) => ({ item, seats: seatsOf(item) }))
+    .flatMap(({ item, seats }) => seats.map((seat) => ({ item, seats, distance: Math.hypot(seat.x - spot.x, seat.z - spot.z) })))
+    .filter(({ distance }) => distance < SEAT_TOLERANCE)
+    .sort((a, b) => a.distance - b.distance)[0];
+  if (!target) return occupiedSeat(spot, occupants, playerId) ? null : { spot, itemId: null };
+  // Support desks' two sides have different roles; their seats are never interchangeable.
+  const seat = chooseSeat(target.seats, spot, occupants, playerId, target.item.type !== 'support-desk');
+  return seat ? { spot: { ...seat, anim: 'sit' }, itemId: target.item.id } : null;
 }
 
 const sha256 = (text: string) => crypto.createHash('sha256').update(text).digest('base64url');
@@ -563,7 +580,8 @@ export function attachRealtime(io: IO, store: OfficeStore, opts: { accounts: Acc
       if (browser) socket.data.browser = browser;
       // Coming back: where they were. Otherwise at the entrance.
       const back = req.at && typeof req.at === 'object' ? spotOn(stored.office, req.at.x, req.at.z, req.at.ry, req.at.anim) : null;
-      const spot = back ?? spawnSpot(stored.office, r.players.values());
+      const accepted = back && availableSeat(stored.office, back, r.players.values());
+      const spot: Spot = accepted?.spot ?? { ...spawnSpot(stored.office, r.players.values()), ry: 0, anim: 'idle' };
       // Customers stay anonymous to the others (the support feature numbers them once they have a
       // ticket): no account, its name or its character.
       const asCustomer = isCustomer(joinedAs, stored.kind);
@@ -574,8 +592,8 @@ export function attachRealtime(io: IO, store: OfficeStore, opts: { accounts: Acc
         status: sanitizeStatus(req.status),
         x: spot.x,
         z: spot.z,
-        ry: back?.ry ?? 0,
-        anim: back?.anim ?? 'idle',
+        ry: spot.ry,
+        anim: spot.anim,
         mic: req.mic === true,
         cam: req.cam === true,
         screen: false,
@@ -614,14 +632,24 @@ export function attachRealtime(io: IO, store: OfficeStore, opts: { accounts: Acc
         });
     });
 
-    socket.on('move', (x, z, ry, anim) => {
+    socket.on('move', (x, z, ry, anim, requestId) => {
       const p = me();
       const o = office();
       if (!p || !o || !room || !canMove()) return;
       const spot = spotOn(o, x, z, ry, anim);
       if (!spot) return;
       const was: Spot = { x: p.x, z: p.z, ry: p.ry, anim: p.anim };
-      Object.assign(p, spot);
+      const accepted = availableSeat(o, spot, room.players.values(), p.id);
+      const next = accepted?.spot ?? was;
+      Object.assign(p, next);
+      if (spot.anim === 'sit' && (next.x !== spot.x || next.z !== spot.z || next.ry !== spot.ry || next.anim !== spot.anim)) {
+        const itemId = accepted?.itemId ?? availableSeat(o, was, room.players.values(), p.id)?.itemId ?? null;
+        if (typeof requestId === 'number' && Number.isSafeInteger(requestId) && requestId >= 0) {
+          socket.emit('seat:resolved', { x, z }, next, itemId, requestId);
+        } else {
+          socket.emit('seat:resolved', { x, z }, next, itemId);
+        }
+      }
       // A step while walking may be dropped for someone whose connection is busy (the next one
       // replaces it), as may a repeat of where they already are. Anything else (stopping, sitting
       // down, standing up, a jump) happens once: it's queued for everyone, in order.

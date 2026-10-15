@@ -206,6 +206,8 @@ export interface ServerToClientEvents {
   'player:joined': (p: PlayerState) => void;
   'player:left': (id: string) => void;
   'player:moved': (m: MovePacket) => void;
+  /** Your requested sitting spot was occupied or reassigned; the accepted pose is authoritative. */
+  'seat:resolved': (requested: Pick<Spot, 'x' | 'z'>, spot: Spot, itemId: string | null, requestId?: number) => void;
   'player:updated': (id: string, patch: PlayerPatch) => void;
   'peer:connect': (peerId: string, sid: number, initiator: boolean) => void;
   'peer:disconnect': (peerId: string) => void;
@@ -225,7 +227,8 @@ export interface ServerToClientEvents {
 
 export interface ClientToServerEvents {
   join: (req: JoinRequest, ack: (res: JoinResponse) => void) => void;
-  move: (x: number, z: number, ry: number, anim: AnimState) => void;
+  /** requestId correlates sitting corrections with the current movement intent. */
+  move: (x: number, z: number, ry: number, anim: AnimState, requestId?: number) => void;
   profile: (patch: ProfilePatch) => void;
   emote: (emoji: string) => void;
   'office:op': (op: OfficeOp) => void;

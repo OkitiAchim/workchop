@@ -104,6 +104,9 @@ function startup(id: string, name: string): Office {
     specs.push(['stool', 25.5, z, 1], ['stool', 27.5, z, 3], ['stool', 26.5, z - 1, 0], ['stool', 26.5, z + 1, 2]);
   }
 
+  // Games corner: leave room to walk between the couch, controller table and wall TV.
+  // Append to preserve existing furniture IDs.
+  specs.push(['racing-tv', 16, 23.94, 2], ['gaming-couch', 16, 19.5, 0], ['gaming-table', 16, 22, 0]);
   const office = build(id, settings, specs, [
     { name: 'Meeting Room', x: 0, z: 0, w: 10, d: 8, color: '#6c8cff' },
     { name: 'Lounge', x: 1, z: 12, w: 9, d: 8, color: '#ff9f6c' },

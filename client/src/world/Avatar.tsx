@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import type { AnimState, AvatarConfig } from '../../../shared/types';
 import { shade } from '../lib/color';
 import { Ball, Box, Cyl, mat } from './prims';
+import { GameController } from './GameController';
 
 export interface AvatarMotion {
   anim: AnimState;
@@ -217,6 +218,17 @@ function FocusHeadphones() {
   );
 }
 
+/** Race headphones are cosmetic and do not change the office focus or call settings. */
+function RacingHeadphones({ color }: { color: string }) {
+  return <group>
+    <Mesh geo={focusBandGeo} c="#202b3b" p={[0, HEAD_Y, 0]} s={[0.335, 0.41, 0.36]} />
+    {[-1, 1].map((side) => <group key={side}>
+      <Cyl p={[side * 0.33, HEAD_Y, 0]} r={[0, 0, Math.PI / 2]} rad={0.12} h={0.09} c={color} />
+      <Cyl p={[side * 0.282, HEAD_Y, 0]} r={[0, 0, Math.PI / 2]} rad={0.105} h={0.03} c="#152030" />
+    </group>)}
+  </group>;
+}
+
 function Face({ a }: { a: AvatarConfig }) {
   const z = 0.245;
   return (
@@ -287,9 +299,11 @@ function Torso({ a }: { a: AvatarConfig }) {
 }
 
 /** A chibi-style character built from primitives; animated from `motion`. `focus` puts headphones on. */
-export const Avatar = memo(function Avatar({ config, motion, focus = false }: { config: AvatarConfig; motion: MutableRefObject<AvatarMotion>; focus?: boolean }) {
+export const Avatar = memo(function Avatar({ config, motion, focus = false, controller }: { config: AvatarConfig; motion: MutableRefObject<AvatarMotion>; focus?: boolean; controller?: string }) {
   const a = config;
   const body = useRef<THREE.Group>(null);
+  const heldController = useRef<THREE.Group>(null);
+  const raceHeadphones = useRef<THREE.Group>(null);
   const legL = useRef<THREE.Group>(null);
   const legR = useRef<THREE.Group>(null);
   const kneeL = useRef<THREE.Group>(null);
@@ -302,6 +316,8 @@ export const Avatar = memo(function Avatar({ config, motion, focus = false }: { 
 
   useFrame((state, dt) => {
     const m = motion.current;
+    if (heldController.current) heldController.current.visible = m.anim === 'sit';
+    if (raceHeadphones.current) raceHeadphones.current.visible = m.anim === 'sit';
     const t = state.clock.elapsedTime;
     const k = 1 - Math.exp(-dt * 14);
     // Gestures follow their targets faster, so claps and dance moves keep their snap.
@@ -383,6 +399,12 @@ export const Avatar = memo(function Avatar({ config, motion, focus = false }: { 
       }
     }
 
+    if (controller && m.anim === 'sit') {
+      armLx = armRx = -1.1;
+      armLz = -0.36;
+      armRz = 0.36;
+    }
+
     if (body.current) {
       body.current.position.y += (hipY - HIP_Y + bob + hop - body.current.position.y) * (g ? kg : k);
       // Sitting keeps the torso in front of the seat's backrest (seats are placed so the back just touches it).
@@ -438,12 +460,13 @@ export const Avatar = memo(function Avatar({ config, motion, focus = false }: { 
       <Torso a={a} />
       {arm(1, armL)}
       {arm(-1, armR)}
+      {controller && <group ref={heldController} position={[0, 0.84, 0.36]} rotation={[0.18, Math.PI, 0]}><GameController color={controller} /></group>}
       <group ref={head}>
         <Ball p={[0, HEAD_Y, 0]} s={[HEAD_R, HEAD_R * 0.97, HEAD_R * 0.95]} c={a.skin} roughness={0.6} />
         <Face a={a} />
         <Hair a={a} hatOn={hatOn} />
-        {!(focus && a.hat === 'headphones') && <Hat a={a} />}
-        {focus && <FocusHeadphones />}
+        {!((focus || controller) && a.hat === 'headphones') && <Hat a={a} />}
+        {controller ? <group ref={raceHeadphones}><RacingHeadphones color={controller} /></group> : focus && <FocusHeadphones />}
       </group>
     </group>
   );

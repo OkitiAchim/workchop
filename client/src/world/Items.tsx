@@ -1,16 +1,17 @@
 import { Edges } from '@react-three/drei';
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
-import { memo, useRef, useState } from 'react';
+import { memo, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { create } from 'zustand';
 import { getEntry, seatsOf } from '../../../shared/catalog';
 import { itemFootprint } from '../../../shared/geometry';
+import { DEFAULT_RACING_ID, racingItems } from '../../../shared/racing';
 import type { OfficeItem } from '../../../shared/types';
 import { local } from '../lib/positions';
 import { canBuild, getState, setState, useStore } from '../state/store';
 import { offeredInteraction, useItemDecor } from './extensions';
 import { ItemModel } from './models';
-import { walkTo } from './movement';
+import { walkToItemSeat } from './movement';
 import { OpacityContext } from './prims';
 
 /**
@@ -47,12 +48,9 @@ function onItemClick(e: ThreeEvent<MouseEvent>, item: OfficeItem) {
     setState({ panel: 'music', musicItemId: item.id, mode: 'play' });
     return;
   }
-  const seats = seatsOf(item);
-  if (!seats.length) return;
+  if (!seatsOf(item).length) return;
   e.stopPropagation();
-  // Walk to the closest free seat of this item and sit down.
-  const seat = seats.sort((a, b) => Math.hypot(a.x - local.x, a.z - local.z) - Math.hypot(b.x - local.x, b.z - local.z))[0];
-  walkTo(seat.x, seat.z, { ...seat, itemId: item.id });
+  walkToItemSeat(item.id, e.point);
 }
 
 function setCursor(cursor: string) {
@@ -100,11 +98,12 @@ export const ItemView = memo(function ItemView({
   opacity?: number;
 }) {
   const building = useStore((s) => s.mode === 'build');
+  const editable = !item.id.startsWith(DEFAULT_RACING_ID);
   const entry = getEntry(item.type);
   const interaction = useStore((s) => offeredInteraction(item.type, s));
   const decor = useItemDecor().filter((d) => d.types.includes(item.type));
   const sittable = !!entry?.seats || !!entry?.music || !!interaction;
-  const hoverable = interactive && (building || sittable);
+  const hoverable = interactive && ((building && editable) || (!building && sittable));
   const hover = (e: ThreeEvent<PointerEvent>, on: boolean) => {
     setCursor(on ? (building ? 'grab' : 'pointer') : '');
     if (building || !interaction?.onHover) return;
@@ -116,7 +115,7 @@ export const ItemView = memo(function ItemView({
     <group
       position={[item.x, 0, item.z]}
       rotation={[0, (item.rot * Math.PI) / 2, 0]}
-      onPointerDown={interactive && building ? (e) => onItemPointerDown(e, item) : undefined}
+      onPointerDown={interactive && building && editable ? (e) => onItemPointerDown(e, item) : undefined}
       onClick={interactive && !building && sittable ? (e) => onItemClick(e, item) : undefined}
       onPointerOver={hoverable ? (e) => hover(e, true) : undefined}
       onPointerOut={hoverable ? (e) => hover(e, false) : undefined}
@@ -125,7 +124,7 @@ export const ItemView = memo(function ItemView({
         <ItemModel type={item.type} color={item.color} itemId={item.id} data={item.data} item={item} />
         {interactive && decor.map((d) => <d.Component key={d.id} item={item} />)}
       </OpacityContext.Provider>
-      {interactive && building && <HitBox type={item.type} />}
+      {interactive && building && editable && <HitBox type={item.type} />}
       {selected && <SelectionBox item={item} />}
     </group>
   );
@@ -144,7 +143,8 @@ function sameSet(a: Set<string>, b: Set<string>) {
 
 /** All furniture. Tall items between the camera and your character fade out. */
 export function Items() {
-  const items = useStore((s) => s.office?.items ?? []);
+  const office = useStore((s) => s.office);
+  const items = useMemo(() => office ? racingItems(office) : [], [office]);
   const selectedId = useStore((s) => (s.mode === 'build' ? s.build.selectedId : null));
   const dragId = useDrag((s) => (s.moved ? s.item?.id ?? null : null));
   const camera = useThree((s) => s.camera);

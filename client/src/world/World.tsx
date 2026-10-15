@@ -3,6 +3,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Component, Suspense, useEffect, useRef, type ComponentRef, type ReactNode } from 'react';
 import * as THREE from 'three';
 import { getEntry } from '../../../shared/catalog';
+import { racingItems } from '../../../shared/racing';
 import { local } from '../lib/positions';
 import { getState, useStore } from '../state/store';
 import { BuildGrid, Floor, Lights, PerimeterWalls, Sky, Zones } from './Environment';
@@ -71,10 +72,12 @@ function CameraRig() {
     if ((seat?.itemId ?? null) !== seatId.current) {
       seatId.current = seat?.itemId ?? null;
       swing.current = null;
-      if (seat && facesAcross(seat.itemId)) {
+      const office = getState().office;
+      const gaming = seat && office && racingItems(office).some((i) => i.id === seat.itemId && i.type === 'gaming-couch');
+      if (seat && (gaming || facesAcross(seat.itemId))) {
         spherical.setFromVector3(offset.copy(camera.position).sub(c.target));
         // Behind you, a little above your head.
-        swing.current = { theta: seat.ry + Math.PI, phi: 1.05, radius: Math.min(Math.max(spherical.radius, 3.5), 5) };
+        swing.current = { theta: seat.ry + Math.PI, phi: gaming ? 1.2 : 1.05, radius: gaming ? 5.5 : Math.min(Math.max(spherical.radius, 3.5), 5) };
       }
     }
     const to = swing.current;

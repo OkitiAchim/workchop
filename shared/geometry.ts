@@ -1,5 +1,6 @@
 import { getEntry, rotateLocal, rotatedSize, type Seat } from './catalog';
 import type { Office, OfficeItem, OfficeSettings, Status, Zone } from './types';
+import { racingItems } from './racing';
 
 export interface AABB {
   minX: number;
@@ -32,9 +33,9 @@ export function itemFootprint(item: OfficeItem): AABB | null {
   return { minX: item.x - w / 2, maxX: item.x + w / 2, minZ: item.z - d / 2, maxZ: item.z + d / 2 };
 }
 
-export function buildColliders(office: Pick<Office, 'items'>): AABB[] {
+export function buildColliders(office: Pick<Office, 'items'> & Partial<Pick<Office, 'settings'>>): AABB[] {
   const boxes: AABB[] = [];
-  for (const item of office.items) {
+  for (const item of racingItems(office)) {
     if (!getEntry(item.type)?.solid) continue;
     const b = itemBox(item);
     if (b) boxes.push(b);
