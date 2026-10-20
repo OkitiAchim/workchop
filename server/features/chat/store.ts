@@ -300,8 +300,9 @@ export class ChatStore {
     const res = await this.db.query<{ id: string; filename: string; content_type: string; byte_size: number }>(
       `SELECT u.id, u.filename, u.content_type, u.byte_size FROM uploads u
        WHERE u.id = ANY($1::uuid[]) AND u.office_id = $2 AND u.uploader_user_id IS NOT DISTINCT FROM $3
-         AND u.created_at > now() - interval '1 day'
-         AND NOT EXISTS (SELECT 1 FROM chat_attachments a WHERE a.upload_id = u.id)`,
+           AND u.created_at > now() - interval '1 day' AND u.scope IS NULL
+         AND NOT EXISTS (SELECT 1 FROM chat_attachments a WHERE a.upload_id = u.id)
+         AND NOT EXISTS (SELECT 1 FROM upload_references r WHERE r.upload_id = u.id)`,
       [ids, officeId, userId],
     );
     return new Map(res.rows.map((r) => [r.id, { name: r.filename, contentType: r.content_type, size: r.byte_size }]));
@@ -477,6 +478,7 @@ export class ChatStore {
     const res = await this.db.query<{ id: string }>(
       `SELECT u.id FROM uploads u
        WHERE u.created_at < now() - interval '1 day' AND NOT EXISTS (SELECT 1 FROM chat_attachments a WHERE a.upload_id = u.id)
+       AND NOT EXISTS (SELECT 1 FROM upload_references r WHERE r.upload_id = u.id)
        LIMIT $1`,
       [batch],
     );

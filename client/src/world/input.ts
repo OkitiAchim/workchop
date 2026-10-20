@@ -1,8 +1,11 @@
+import { getState } from '../state/store';
+
 /** Keys currently held down (KeyboardEvent.code), ignoring keys typed into form fields. */
 export const pressed = new Set<string>();
 
 export function isTyping(): boolean {
   const el = document.activeElement as HTMLElement | null;
+  if (getState().modal === 'whiteboard') return true;
   if (!el) return false;
   return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable;
 }
@@ -20,6 +23,7 @@ if (typeof window !== 'undefined') {
 }
 
 export function axis(): { x: number; y: number; run: boolean } {
+  if (getState().modal === 'whiteboard') return { x: 0, y: 0, run: false };
   const has = (...codes: string[]) => codes.some((c) => pressed.has(c));
   const x = (has('KeyD', 'ArrowRight') ? 1 : 0) - (has('KeyA', 'ArrowLeft') ? 1 : 0);
   const y = (has('KeyW', 'ArrowUp') ? 1 : 0) - (has('KeyS', 'ArrowDown') ? 1 : 0);

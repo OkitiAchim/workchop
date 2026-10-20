@@ -13,7 +13,7 @@ export type AuthPage = 'signin' | 'signup' | 'forgot' | 'reset' | 'confirm-email
 /** The open side panel: 'none', or the id of a panel in ui/panels.tsx ('chat', 'people', 'build', 'music'…). */
 export type Panel = string;
 export type BuildTool = 'select' | 'place' | 'zone';
-export type Modal = 'none' | 'avatar' | 'settings' | 'profile';
+export type Modal = 'none' | 'avatar' | 'settings' | 'profile' | 'whiteboard';
 
 export type RemotePlayer = Omit<PlayerState, 'x' | 'z' | 'ry' | 'anim'>;
 

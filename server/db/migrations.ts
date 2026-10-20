@@ -181,6 +181,18 @@ export const coreMigrations: Migration[] = [
       CREATE INDEX office_invites_email_idx ON office_invites (email);
       CREATE INDEX office_invites_expires_idx ON office_invites (expires_at);`,
   },
+  {
+    id: 6,
+    name: 'feature_upload_references',
+    sql: `ALTER TABLE uploads ADD COLUMN scope text;
+    CREATE TABLE upload_references (
+      upload_id uuid NOT NULL REFERENCES uploads ON DELETE CASCADE,
+      office_id text NOT NULL REFERENCES offices ON DELETE CASCADE,
+      kind text NOT NULL,
+      owner_id text NOT NULL,
+      PRIMARY KEY (upload_id, kind, owner_id)
+    ); CREATE INDEX upload_references_owner_idx ON upload_references (office_id, kind, owner_id);`,
+  },
 ];
 
 /** Core migrations followed by each feature's, checked for clashing ids. */

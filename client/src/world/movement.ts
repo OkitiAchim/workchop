@@ -145,6 +145,7 @@ let stuckTime = 0;
 
 /** Advance the local player one frame. Returns the horizontal speed (for animation). */
 export function stepLocal(dt: number, camera: Camera): number {
+  if (getState().modal === 'whiteboard') { local.path = local.pathSeat = null; return 0; }
   const office = getState().office;
   if (!office) return 0;
   const { colliders } = officeData(office);

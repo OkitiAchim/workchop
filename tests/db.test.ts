@@ -104,7 +104,7 @@ describe(`migrations on ${TEST_DATABASE_URL ? 'Postgres' : 'PGlite'}`, () => {
     await member('visitor', 'shared1', 'member', 30);
     await member('first', 'solo1', 'owner', 1);
 
-    expect(await migrate(db)).toEqual(['5 workspaces']);
+    expect(await migrate(db)).toEqual(coreMigrations.filter((m) => m.id >= 5).map((m) => `${m.id} ${m.name}`));
     const { rows } = await db.query('SELECT office_id, user_id, role FROM memberships ORDER BY office_id, user_id');
     expect(rows).toEqual([
       // The earliest owner keeps the office; the others become admins.

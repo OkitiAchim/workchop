@@ -467,6 +467,9 @@ describe('realtime', () => {
 describe('moving', () => {
   it('queues sitting down, standing up and stopping for a busy connection; only steps and repeats may be dropped', async () => {
     const { id } = await createOffice();
+    // Sitting requires a real available seat; this test exercises transport delivery, not seat rejection.
+    const stored = (await server.store.get(id))!;
+    server.store.update(id, { ...stored.office, items: [{ id: 'transport-chair', type: 'chair', x: 5.5, z: 5, rot: 2 }] });
     const a = await join(id, 'Ann');
     const b = await join(id, 'Bob');
     const aId = a.socket.id!;

@@ -10,6 +10,7 @@ const fake = vi.hoisted(() => ({
   sendMove: vi.fn(),
   toast: vi.fn(),
   input: { x: 0, y: 0, run: false },
+  modal: 'none',
 }));
 
 vi.mock('../client/src/lib/session', () => ({ getSession: () => ({ sendMove: fake.sendMove }) }));
@@ -33,7 +34,7 @@ const office: Office = {
 } as unknown as Office;
 
 vi.mock('../client/src/state/store', () => ({
-  getState: () => ({ office, selfId: 'me', toasts: [], hint: null }),
+  getState: () => ({ office, selfId: 'me', toasts: [], hint: null, modal: fake.modal }),
   setState: () => {},
   toast: fake.toast,
 }));
@@ -46,12 +47,21 @@ const camera = { matrixWorld: { elements: new Array(16).fill(0) } } as never;
 beforeEach(() => {
   fake.sendMove.mockClear();
   fake.toast.mockClear();
+  fake.modal = 'none';
   Object.assign(fake.input, { x: 0, y: 0, run: false });
   remoteTargets.clear();
   Object.assign(local, { x: 10, z: 10, ry: 0, anim: 'idle', seat: null, path: null, pathSeat: null });
 });
 
 describe('sitting down and getting up', () => {
+  it('pauses walking and clears queued seating while a whiteboard is open', () => {
+    walkTo(15, 11, { x: 15, z: 11, ry: 0, itemId: 'chair1' });
+    fake.modal = 'whiteboard'; fake.input.y = 1;
+    const before = { x: local.x, z: local.z };
+    expect(stepLocal(1 / 60, camera)).toBe(0);
+    expect({ x: local.x, z: local.z }).toEqual(before);
+    expect(local.path).toBeNull(); expect(local.pathSeat).toBeNull(); expect(fake.sendMove).not.toHaveBeenCalled();
+  });
   it('are sent at once, without waiting for a frame', () => {
     sitOn({ x: 20, z: 21, ry: Math.PI, itemId: 'desk1' });
     expect(fake.sendMove).toHaveBeenCalledExactlyOnceWith(20, 21, Math.PI, 'sit');

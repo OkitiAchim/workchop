@@ -9,6 +9,7 @@ import { feature as racing } from './racing';
 import { feature as support } from './support';
 import { feature as weather } from './weather';
 import { feature as world } from './world';
+import { feature as whiteboard } from './whiteboard';
 
 /**
  * The server's features, registered in this order after the core routes and socket handlers.
@@ -19,7 +20,7 @@ import { feature as world } from './world';
  * adds them, for development. Off, they have no tables, routes, socket handlers or timers.
  */
 export function serverFeatures(env: NodeJS.ProcessEnv = process.env): Feature[] {
-  return [chat, world, audio, presence, support, billing, ...(coinsOn(env) ? [coins] : []), weather, github, racing];
+  return [chat, world, audio, presence, support, billing, ...(coinsOn(env) ? [coins] : []), weather, github, racing, whiteboard];
 }
 
 /** The features left out by a setting (their tables stay in a database that had them on). */

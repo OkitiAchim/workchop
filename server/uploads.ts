@@ -201,7 +201,7 @@ export interface Uploader {
   name: string;
 }
 
-class UploadError extends Error {
+export class UploadError extends Error {
   constructor(
     readonly status: number,
     message: string,
@@ -234,6 +234,13 @@ export type Uploads = ReturnType<typeof createUploads>;
  */
 export type UploadCheck = (socketId: string, officeId: string, bytes: number) => string | null;
 
+export interface UploadScope {
+  authorize(req: express.Request, officeId: string): boolean;
+  validate(data: Buffer, contentType: string): void;
+  attach(tx: Tx, id: string, officeId: string, req: express.Request): Promise<void>;
+  mayRead(req: express.Request, officeId: string, ownerId: string): boolean;
+}
+
 /** File uploads for an office (chat attachments and the like), stored in the database, on disk or in S3. */
 export function createUploads(deps: UploadDeps) {
   const { db, options } = deps;
@@ -251,6 +258,7 @@ export function createUploads(deps: UploadDeps) {
   const mayStart = windowLimiter(PER_VISITOR_FILES, PER_VISITOR_WINDOW);
   const inProgress = new Map<string, number>();
   const checks: UploadCheck[] = [];
+  const scopes = new Map<string, UploadScope>();
   let buffered = 0;
 
   const readBody = (req: express.Request, res: express.Response) =>
@@ -281,6 +289,9 @@ export function createUploads(deps: UploadDeps) {
       const uploadKey = req.get('x-workchop-upload-key');
       const who = socketId && uploadKey && isValidId(officeId) ? deps.uploaderOf(socketId, uploadKey, officeId) : null;
       if (!who) throw new UploadError(403, 'Join the office before uploading files.');
+      const scopeName = req.get('x-upload-scope');
+      const scope = scopeName ? scopes.get(scopeName) : undefined;
+      if (scopeName && (!scope || !scope.authorize(req, officeId))) throw new UploadError(403, 'You do not have permission to upload here.');
       // Refuse big files before reading them.
       const declared = Number(req.get('content-length'));
       if (declared > options.maxBytes) throw new UploadError(413, tooLarge(options.maxBytes));
@@ -324,6 +335,7 @@ export function createUploads(deps: UploadDeps) {
       }
       const declaredType = (req.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
       const contentType = CONTENT_TYPE.test(declaredType) ? declaredType : 'application/octet-stream';
+      scope?.validate(data, contentType);
       const id = crypto.randomUUID();
       const key = store.kind === 'db' ? id : `${officeId}/${id}`;
       const sha256 = crypto.createHash('sha256').update(data).digest('hex');
@@ -338,11 +350,15 @@ export function createUploads(deps: UploadDeps) {
           await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`uploads:${officeId}`]);
           if ((await usedBy(tx, officeId)) + data.length > options.quotaBytes) throw quotaFull();
           await tx.query(
-            `INSERT INTO uploads (id, office_id, uploader_user_id, uploader_name, filename, content_type, byte_size, sha256, storage, storage_key)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-            [id, officeId, who.userId, who.name, name, contentType, data.length, sha256, store.kind, key],
+            `INSERT INTO uploads (id, office_id, uploader_user_id, uploader_name, filename, content_type, byte_size, sha256, storage, storage_key, scope)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            [id, officeId, who.userId, who.name, name, contentType, data.length, sha256, store.kind, key, scopeName ?? null],
           );
           if (store.kind === 'db') await store.put(key, data, contentType, tx);
+          if (scope) {
+            if (!scope.authorize(req, officeId)) throw new UploadError(403, 'Your editing turn ended.');
+            await scope.attach(tx, id, officeId, req);
+          }
         });
       } catch (err) {
         if (store.kind !== 'db') await store.delete(key).catch(() => {});
@@ -363,20 +379,27 @@ export function createUploads(deps: UploadDeps) {
     }
   };
 
-  /** GET /api/uploads/:id/:name? The id is an unguessable uuid, so the URL itself grants access. */
+  /** Ordinary chat links grant access; scoped assets always require their feature's authorization. */
   const download: express.RequestHandler = async (req, res) => {
     const id = String(req.params.id);
     if (!UUID.test(id)) {
       res.status(404).json({ error: 'File not found' });
       return;
     }
-    const found = await db.query<{ filename: string; content_type: string; byte_size: number; sha256: string; storage: UploadStorage; storage_key: string }>(
-      'SELECT filename, content_type, byte_size, sha256, storage, storage_key FROM uploads WHERE id = $1',
+    const found = await db.query<{ filename: string; content_type: string; byte_size: number; sha256: string; storage: UploadStorage; storage_key: string; scope: string | null }>(
+      'SELECT filename, content_type, byte_size, sha256, storage, storage_key, scope FROM uploads WHERE id = $1',
       [id],
     );
     const row = found.rows[0];
     if (!row) {
       res.status(404).json({ error: 'File not found' });
+      return;
+    }
+    const references = (await db.query<{ kind: string; office_id: string; owner_id: string }>(
+      'SELECT kind, office_id, owner_id FROM upload_references WHERE upload_id = $1', [id],
+    )).rows;
+    if ((row.scope && !references.some((r) => r.kind === row.scope)) || (references.length && !references.every((r) => scopes.get(r.kind)?.mayRead(req, r.office_id, r.owner_id)))) {
+      res.set('Cache-Control', 'no-store').status(404).json({ error: 'File not found' });
       return;
     }
     const from = stores[row.storage];
@@ -387,7 +410,7 @@ export function createUploads(deps: UploadDeps) {
     const etag = `"${row.sha256}"`;
     // Files never change under the same id.
     const cacheForever = () => {
-      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      res.setHeader('Cache-Control', references.length ? 'private, no-store' : 'public, max-age=31536000, immutable');
       res.setHeader('ETag', etag);
     };
     if (req.get('if-none-match') === etag) {
@@ -433,7 +456,7 @@ export function createUploads(deps: UploadDeps) {
     try {
       // Bytes in the database go with the row; the others are deleted after it.
       const res = await db.query<{ id: string; storage: UploadStorage; storage_key: string }>(
-        'DELETE FROM uploads WHERE id = ANY($1::uuid[]) RETURNING id, storage, storage_key',
+        'DELETE FROM uploads WHERE id = ANY($1::uuid[]) AND NOT EXISTS (SELECT 1 FROM upload_references r WHERE r.upload_id = uploads.id) RETURNING id, storage, storage_key',
         [valid],
       );
       for (const row of res.rows) {
@@ -448,5 +471,6 @@ export function createUploads(deps: UploadDeps) {
   /** Adds a feature's check of uploads (see UploadCheck). */
   const addCheck = (check: UploadCheck) => void checks.push(check);
 
-  return { upload, download, remove, addCheck, store, description: store.description };
+  const addScope = (name: string, scope: UploadScope) => { scopes.set(name, scope); };
+  return { upload, download, remove, addCheck, addScope, store, description: store.description };
 }

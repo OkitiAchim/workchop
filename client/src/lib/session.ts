@@ -385,12 +385,24 @@ export class OfficeSession {
    * to show ("File too large (max 10 MB)", "Join the office before uploading files."…); with
    * `signal` aborted it rejects with an AbortError.
    */
-  upload(file: Blob, opts: UploadOptions = {}): Promise<UploadedFile> {
+  upload(file: Blob, opts: UploadOptions & { whiteboard?: { id: string; token: string } } = {}): Promise<UploadedFile> {
     const joined = this.joined;
     if (!joined) return Promise.reject(new Error('Not connected to the office right now. Please try again in a moment.'));
     const name = wellFormed(opts.name ?? (file instanceof File ? file.name : 'file'));
-    const headers = { 'X-Workchop-Socket': joined.selfId, 'X-Workchop-Upload-Key': joined.uploadKey, 'X-Filename': encodeURIComponent(name) };
+    const headers = { 'X-Workchop-Socket': joined.selfId, 'X-Workchop-Upload-Key': joined.uploadKey, 'X-Filename': encodeURIComponent(name),
+      ...(opts.whiteboard ? { 'X-Upload-Scope': 'whiteboard', 'X-Whiteboard-Id': opts.whiteboard.id, 'X-Whiteboard-Token': opts.whiteboard.token } : {}) };
     return postFile(`/api/offices/${encodeURIComponent(this.officeId)}/uploads`, file, headers, { ...opts, maxBytes: this.uploadMaxBytes });
+  }
+
+  /** Private feature attachments require the current office connection, not a shareable URL. */
+  async downloadAsset(id: string): Promise<Blob> {
+    const joined = this.joined;
+    if (!joined || !/^[a-f0-9-]{36}$/.test(id)) throw new Error('Join the office to view this diagram.');
+    const response = await fetch(`/api/uploads/${id}`, { headers: {
+      'X-Workchop-Socket': joined.selfId, 'X-Workchop-Upload-Key': joined.uploadKey,
+    }, cache: 'no-store' });
+    if (!response.ok) throw new Error('This diagram is unavailable.');
+    return response.blob();
   }
 
   private startMusic(): void {

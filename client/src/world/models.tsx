@@ -146,13 +146,6 @@ function Reception({ c }: { c: string }) {
 }
 
 function Whiteboard() {
-  const strokes: [number, number, number, string][] = [
-    [-0.45, 1.5, 0.6, '#4361ee'],
-    [-0.35, 1.38, 0.4, '#4361ee'],
-    [0.35, 1.45, 0.5, '#ef476f'],
-    [-0.2, 1.15, 0.9, '#2a9d8f'],
-    [0.4, 1.02, 0.3, '#2a9d8f'],
-  ];
   return (
     <group>
       {[-0.92, 0.92].map((x) => (
@@ -163,9 +156,6 @@ function Whiteboard() {
       ))}
       <Box p={[0, 1.3, -0.01]} s={[1.96, 1.14, 0.03]} c="#b9bec7" />
       <Box p={[0, 1.3, 0.01]} s={[1.88, 1.06, 0.02]} c="#fbfbfd" roughness={0.3} />
-      {strokes.map(([x, y, w, col], i) => (
-        <Box key={i} p={[x, y, 0.022]} s={[w, 0.025, 0.004]} c={col} shadow={false} />
-      ))}
       <Box p={[0, 0.76, 0.04]} s={[1.2, 0.03, 0.08]} c="#b9bec7" />
     </group>
   );
