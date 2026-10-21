@@ -1,16 +1,29 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useSyncExternalStore } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, useSyncExternalStore } from 'react';
 import { Canvas, Rect, FabricImage, Point, type FabricObject } from 'fabric';
 import { BOARD_HEIGHT, BOARD_WIDTH, BOARD_MARGIN, fitBoardObject, type BoardObject } from '../../../../shared/whiteboard';
 import { assetVersion, subscribeAssets } from './assets';
 import { paintBoard, visibleObjects } from './render';
 import { useBoards, previewObject, changeBoard } from './state';
+import { inlineBox, tableCellAt, type TextCell } from './editing';
 
 type Shape = FabricObject & { boardId?: string };
-export interface BoardCanvasHandle { put(o: BoardObject, select?: boolean): void; remove(id: string): void; fit(): void }
-interface Props { tool: string; color: string; weight: number; onSelect(o: BoardObject | null): void }
+export interface BoardCanvasHandle {
+  put(o: BoardObject, select?: boolean): void; remove(id: string): void; fit(): void; zoom(factor: number): void;
+  edit(id: string, cell?: TextCell): void; finishText(): boolean;
+}
+interface Props {
+  tool: string; color: string; weight: number; blocked: boolean; onSelect(o: BoardObject | null): void;
+  onChange(o: BoardObject): void; onCommit(): void; onZoom(percent: number): void;
+}
+interface InlineEdit { object: BoardObject; cell?: TextCell }
 
 export default forwardRef<BoardCanvasHandle, Props>(function BoardCanvas(props, ref) {
   const host = useRef<HTMLDivElement>(null), canvas = useRef<Canvas | null>(null);
+  const mount = useRef<HTMLDivElement>(null), input = useRef<HTMLTextAreaElement>(null);
+  const [inline, setInline] = useState<InlineEdit | null>(null), inlineRef = useRef<InlineEdit | null>(null);
+  const [viewport, setViewport] = useState<number[]>([1, 0, 0, 1, 0, 0]);
+  const startText = useRef<(id: string, cell?: TextCell) => void>(() => {});
+  const finishText = useRef<(commit?: boolean) => boolean>(() => false), zoom = useRef<(factor: number) => void>(() => {});
   const models = useRef(new Map<string, BoardObject>()), current = useRef(props); current.current = props;
   const editable = useBoards((s) => !!s.token && s.online), epoch = useBoards((s) => s.epoch);
   const board = useBoards((s) => s.active ? s.boards[s.active] : undefined);
@@ -20,21 +33,32 @@ export default forwardRef<BoardCanvasHandle, Props>(function BoardCanvas(props, 
   const suppressSelection = useRef(false);
   const previous = useRef({ boardId: '', epoch: -1, editable: false, version: -1 });
   useImperativeHandle(ref, () => ({ put: (o, select) => replace.current(o, select), remove: (id) => {
+    if (inlineRef.current?.object.id === id) finishText.current(false);
     const c = canvas.current; models.current.delete(id);
     const object = c?.getObjects().find((v) => (v as Shape).boardId === id); if (object) c?.remove(object);
     c?.requestRenderAll();
-  }, fit: () => fit.current() }));
+  }, fit: () => fit.current(), zoom: (factor) => zoom.current(factor), edit: (id, cell) => startText.current(id, cell), finishText: () => finishText.current(false) }));
+
+  useEffect(() => {
+    if (!inline || props.blocked) return;
+    const field = input.current; field?.focus();
+    if (field && (field.value === 'New note' || field.value === 'Type your text' || field.value === 'Heading')) field.select();
+  }, [inline?.object.id, inline?.cell?.row, inline?.cell?.column, props.blocked]);
+  useEffect(() => { if (!editable) finishText.current(false); }, [editable, epoch]);
 
   useEffect(() => {
     const parent = host.current!;
-    const element = document.createElement('canvas'); parent.appendChild(element);
+    // Fabric may restore its original element while disposal finishes. Isolate each React
+    // lifecycle so an old restored canvas cannot precede/push down the current canvas.
+    const lifetime = document.createElement('div'); lifetime.className = 'wb-fabric-instance'; mount.current!.appendChild(lifetime);
+    const element = document.createElement('canvas'); lifetime.appendChild(element);
     models.current.clear(); previous.current = { boardId: '', epoch: -1, editable: false, version: -1 };
     const c = new Canvas(element, { selection: false, preserveObjectStacking: true,
       renderOnAddRemove: false, enableRetinaScaling: true }); canvas.current = c;
     c.clipPath = new Rect({ left: 0, top: 0, width: BOARD_WIDTH, height: BOARD_HEIGHT, originX: 'left', originY: 'top', absolutePositioned: true });
     const page = new Rect({ left: 0, top: 0, width: BOARD_WIDTH, height: BOARD_HEIGHT, originX: 'left', originY: 'top', fill: '#ffffff', selectable: false, evented: false });
     const margin = new Rect({ left: BOARD_MARGIN, top: BOARD_MARGIN, width: BOARD_WIDTH - 2 * BOARD_MARGIN,
-      height: BOARD_HEIGHT - 2 * BOARD_MARGIN, originX: 'left', originY: 'top', fill: 'transparent', stroke: '#c8d0df', strokeWidth: 1,
+      height: BOARD_HEIGHT - 2 * BOARD_MARGIN, originX: 'left', originY: 'top', fill: 'transparent', stroke: '#d4d4d8', strokeWidth: 1,
       strokeDashArray: [6, 6], selectable: false, evented: false });
     c.add(page, margin);
     let drawing: { id: string; points: number[] } | null = null, panning = false, last = { x: 0, y: 0 };
@@ -53,24 +77,56 @@ export default forwardRef<BoardCanvasHandle, Props>(function BoardCanvas(props, 
       const options = { left: o.x, top: o.y, originX: 'left' as const, originY: 'top' as const,
         strokeWidth: 0, objectCaching: false,
         selectable: editRef.current && current.current.tool === 'select', evented: true,
-        angle: o.angle ?? 0, lockScalingFlip: true, cornerColor: '#3457df', transparentCorners: false };
+        angle: o.angle ?? 0, lockScalingFlip: true, borderColor: '#52525b', cornerColor: '#ffffff', cornerStrokeColor: '#52525b', transparentCorners: false };
       // Repaint each object from its current data; Fabric never reuses a stale note/text bitmap.
       const scale = Math.min(1, 1024 / Math.max(o.w, o.h));
       const bitmap = document.createElement('canvas'); bitmap.width = Math.max(1, Math.ceil(o.w * scale)); bitmap.height = Math.max(1, Math.ceil(o.h * scale));
-      paintBoard(bitmap, { document: { objects: [{ ...o, x: 0, y: 0, angle: 0 }] }, preview: null }, { width: o.w, height: o.h, transparent: true });
+      paintBoard(bitmap, { document: { objects: [{ ...o, x: 0, y: 0, angle: 0 }] }, preview: null }, { width: o.w, height: o.h, transparent: true },
+        inlineRef.current?.object.id === o.id ? { id: o.id, ...inlineRef.current.cell } : undefined);
       const object: Shape = new FabricImage(bitmap, { ...options, scaleX: o.w / bitmap.width, scaleY: o.h / bitmap.height });
       object.boardId = o.id; c.insertAt(index, object);
       if (selected && editRef.current) c.setActiveObject(object); c.requestRenderAll(); suppressSelection.current = previousSuppress;
+      if (inlineRef.current?.object.id === o.id) {
+        inlineRef.current = { ...inlineRef.current, object: o }; setInline(inlineRef.current);
+      }
+    };
+    finishText.current = (commit = true) => {
+      const active = inlineRef.current; if (!active) return false;
+      inlineRef.current = null; setInline(null);
+      const object = models.current.get(active.object.id); if (object) replace.current(object);
+      if (commit) current.current.onCommit(); return true;
+    };
+    startText.current = (id, cell) => {
+      if (!editRef.current) return;
+      const object = models.current.get(id); if (!object || !['text', 'note', 'table'].includes(object.type)) return;
+      if (inlineRef.current) finishText.current();
+      const value = { object, ...(object.type === 'table' ? { cell: cell ?? { row: 0, column: 0 } } : {}) };
+      inlineRef.current = value; setInline(value); replace.current(object, true); current.current.onSelect(object);
+    };
+    const changedView = () => {
+      setViewport([...c.viewportTransform]);
+      const base = Math.min(c.width / BOARD_WIDTH, c.height / BOARD_HEIGHT);
+      current.current.onZoom(Math.round(c.getZoom() / base * 100));
     };
     fit.current = () => {
       const bounds = parent.getBoundingClientRect(), scale = Math.min(bounds.width / BOARD_WIDTH, bounds.height / BOARD_HEIGHT);
       c.setDimensions({ width: Math.max(1, bounds.width), height: Math.max(1, bounds.height) });
       c.setViewportTransform([scale, 0, 0, scale, (bounds.width - BOARD_WIDTH * scale) / 2, (bounds.height - BOARD_HEIGHT * scale) / 2]);
       parent.dataset.boardAspect = `${BOARD_WIDTH}/${BOARD_HEIGHT}`;
-      c.requestRenderAll();
+      c.requestRenderAll(); changedView();
+    };
+    zoom.current = (factor) => {
+      const base = Math.min(c.width / BOARD_WIDTH, c.height / BOARD_HEIGHT);
+      c.zoomToPoint(new Point(c.width / 2, c.height / 2), Math.min(base * 4, Math.max(base * 0.5, c.getZoom() * factor)));
+      changedView();
     };
     const observer = new ResizeObserver(() => fit.current()); observer.observe(parent); fit.current();
     c.on('selection:created', (e) => select(e.selected[0])); c.on('selection:updated', (e) => select(e.selected[0])); c.on('selection:cleared', () => select());
+    c.on('mouse:dblclick', (event) => {
+      if (!event.target || current.current.tool !== 'select' || current.current.blocked) return;
+      const object = models.current.get((event.target as Shape).boardId ?? '');
+      if (object) startText.current(object.id, object.type === 'table' ? tableCellAt(object, event.scenePoint) : undefined);
+    });
     const transform = (target?: FabricObject, commit = false) => {
       if (!target || !editRef.current) return;
       const o = modelOf(target); if (!o) return;
@@ -87,6 +143,7 @@ export default forwardRef<BoardCanvasHandle, Props>(function BoardCanvas(props, 
       return fitBoardObject({ id: drawing.id, type: 'stroke', x, y, w, h, points: drawing.points.map((p, i) => (p - (i % 2 ? y : x)) / (i % 2 ? h : w)), color: current.current.color, fill: 'transparent', weight: current.current.weight, size: 24 });
     };
     c.on('mouse:down', (e) => {
+      if (current.current.blocked) return;
       const tool = current.current.tool;
       if (tool === 'pan' || !editRef.current) { panning = true; last = { x: e.viewportPoint.x, y: e.viewportPoint.y }; return; }
       if (tool === 'erase' && e.target) {
@@ -99,7 +156,7 @@ export default forwardRef<BoardCanvasHandle, Props>(function BoardCanvas(props, 
       }
     });
     c.on('mouse:move', (e) => {
-      if (panning) { c.relativePan(new Point(e.viewportPoint.x - last.x, e.viewportPoint.y - last.y)); last = { x: e.viewportPoint.x, y: e.viewportPoint.y }; }
+      if (panning) { c.relativePan(new Point(e.viewportPoint.x - last.x, e.viewportPoint.y - last.y)); last = { x: e.viewportPoint.x, y: e.viewportPoint.y }; changedView(); }
       if (!drawing || drawing.points.length >= 5998) return;
       const pad = BOARD_MARGIN + current.current.weight / 2;
       const x = Math.max(pad, Math.min(BOARD_WIDTH - pad, e.scenePoint.x)), y = Math.max(pad, Math.min(BOARD_HEIGHT - pad, e.scenePoint.y));
@@ -110,9 +167,10 @@ export default forwardRef<BoardCanvasHandle, Props>(function BoardCanvas(props, 
     c.on('mouse:wheel', (e) => {
       const base = Math.min(c.width / BOARD_WIDTH, c.height / BOARD_HEIGHT);
       c.zoomToPoint(e.viewportPoint, Math.min(base * 4, Math.max(base * 0.5, c.getZoom() * 0.999 ** e.e.deltaY)));
+      changedView();
       e.e.preventDefault(); e.e.stopPropagation();
     });
-    return () => { observer.disconnect(); c.cancelRequestedRender(); canvas.current = null; models.current.clear(); void c.dispose(); parent.replaceChildren(); };
+    return () => { observer.disconnect(); c.cancelRequestedRender(); canvas.current = null; models.current.clear(); inlineRef.current = null; lifetime.remove(); void c.dispose(); };
   }, []);
   useEffect(() => {
     const c = canvas.current; if (!c) return;
@@ -139,5 +197,29 @@ export default forwardRef<BoardCanvasHandle, Props>(function BoardCanvas(props, 
     }
     previous.current = { boardId: board.boardId, epoch, editable, version };
   }, [board, editable, epoch, version]);
-  return <div className="wb-canvas" ref={host} aria-label="Whiteboard canvas" data-testid="board-canvas" />;
+  const box = inline ? inlineBox(inline.object, viewport, inline.cell) : null;
+  return <div className="wb-canvas" ref={host} aria-label="Whiteboard canvas" data-testid="board-canvas">
+    <div className="wb-fabric" ref={mount} />
+    {inline && box && editable && <textarea key={`${inline.object.id}:${inline.cell?.row ?? ''}:${inline.cell?.column ?? ''}`}
+      ref={input} className="wb-inline-text" aria-label={inline.cell ? `Row ${inline.cell.row + 1} column ${inline.cell.column + 1}` : 'Object text'}
+      placeholder={inline.object.type === 'note' ? 'Type a note…' : 'Type your text…'} spellCheck
+      disabled={props.blocked} maxLength={inline.cell ? 500 : 5000}
+      value={inline.cell ? inline.object.cells?.[inline.cell.row]?.[inline.cell.column] ?? '' : inline.object.text ?? ''}
+      style={{ width: box.width, height: box.height, transform: box.transform, fontSize: inline.object.size, color: inline.object.color }}
+      onPointerDown={(event) => event.stopPropagation()} onBlur={() => finishText.current()}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finishText.current(); host.current?.closest<HTMLElement>('[role="dialog"]')?.focus(); }
+        if (event.key === 'Tab' && inline.cell && inline.object.cells) {
+          const columns = inline.object.cells[0].length, total = inline.object.cells.length * columns;
+          const next = inline.cell.row * columns + inline.cell.column + (event.shiftKey ? -1 : 1);
+          if (next >= 0 && next < total) { event.preventDefault(); event.stopPropagation(); startText.current(inline.object.id, { row: Math.floor(next / columns), column: next % columns }); }
+        }
+      }}
+      onChange={(event) => {
+        const active = inlineRef.current; if (!active || !editRef.current || props.blocked) return;
+        const object = active.object;
+        const updated = active.cell ? { ...object, cells: object.cells!.map((row, r) => row.map((value, c) => r === active.cell!.row && c === active.cell!.column ? event.target.value : value)) } : { ...object, text: event.target.value };
+        current.current.onChange(updated);
+      }} />}
+  </div>;
 });

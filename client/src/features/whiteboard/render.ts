@@ -20,7 +20,7 @@ function text(ctx: CanvasRenderingContext2D, value: string, x: number, y: number
   ctx.restore();
 }
 /** Lightweight world preview: the full editing library isn't loaded by the office scene. */
-export function paintBoard(canvas: HTMLCanvasElement, state?: Pick<BoardState, 'document' | 'preview'>, area = { width: BOARD_WIDTH, height: BOARD_HEIGHT, transparent: false }) {
+export function paintBoard(canvas: HTMLCanvasElement, state?: Pick<BoardState, 'document' | 'preview'>, area = { width: BOARD_WIDTH, height: BOARD_HEIGHT, transparent: false }, editing?: { id: string; row?: number; column?: number }) {
   const ctx = canvas.getContext('2d'); if (!ctx) return;
   ctx.setTransform(canvas.width / area.width, 0, 0, canvas.height / area.height, 0, 0);
   ctx.clearRect(0, 0, area.width, area.height);
@@ -38,7 +38,7 @@ export function paintBoard(canvas: HTMLCanvasElement, state?: Pick<BoardState, '
     } else if (o.type === 'rect' || o.type === 'note') {
       if (o.fill !== 'transparent') ctx.fillRect(0, 0, o.w, o.h);
       ctx.strokeRect(o.weight / 2, o.weight / 2, Math.max(0, o.w - o.weight), Math.max(0, o.h - o.weight));
-      if (o.type === 'note') { ctx.fillStyle = o.color; text(ctx, o.text ?? '', 12, 12, o.w - 24, o.h - 24, o.size); }
+      if (o.type === 'note' && editing?.id !== o.id) { ctx.fillStyle = o.color; text(ctx, o.text ?? '', 12, 12, o.w - 24, o.h - 24, o.size); }
     } else if (o.type === 'ellipse') {
       ctx.beginPath(); ctx.ellipse(o.w / 2, o.h / 2, Math.max(0, (o.w - o.weight) / 2), Math.max(0, (o.h - o.weight) / 2), 0, 0, Math.PI * 2);
       if (o.fill !== 'transparent') ctx.fill(); ctx.stroke();
@@ -52,13 +52,13 @@ export function paintBoard(canvas: HTMLCanvasElement, state?: Pick<BoardState, '
         ctx.beginPath(); ctx.moveTo(x - len * Math.cos(a - 0.45), y - len * Math.sin(a - 0.45));
         ctx.lineTo(x, y); ctx.lineTo(x - len * Math.cos(a + 0.45), y - len * Math.sin(a + 0.45)); ctx.stroke();
       }
-    } else if (o.type === 'text') { ctx.fillStyle = o.color; text(ctx, o.text ?? '', 0, 0, o.w, o.h, o.size); }
+    } else if (o.type === 'text' && editing?.id !== o.id) { ctx.fillStyle = o.color; text(ctx, o.text ?? '', 0, 0, o.w, o.h, o.size); }
     else if (o.type === 'table' && o.cells) {
       const rh = o.h / o.cells.length, cw = o.w / o.cells[0].length;
       o.cells.forEach((row, r) => row.forEach((cell, c) => {
-        ctx.fillStyle = r === 0 ? '#eef2ff' : '#ffffff'; ctx.fillRect(c * cw, r * rh, cw, rh);
+        ctx.fillStyle = r === 0 ? '#f4f4f5' : '#ffffff'; ctx.fillRect(c * cw, r * rh, cw, rh);
         ctx.fillStyle = o.color;
-        text(ctx, cell, c * cw + 8, r * rh + 8, cw - 16, rh - 16, o.size);
+        if (editing?.id !== o.id || editing.row !== r || editing.column !== c) text(ctx, cell, c * cw + 8, r * rh + 8, cw - 16, rh - 16, o.size);
       }));
       ctx.beginPath(); ctx.rect(o.weight / 2, o.weight / 2, Math.max(0, o.w - o.weight), Math.max(0, o.h - o.weight));
       for (let r = 1; r < o.cells.length; r++) { ctx.moveTo(0, r * rh); ctx.lineTo(o.w, r * rh); }
